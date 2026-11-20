@@ -1,104 +1,136 @@
 # Obsidian Vault MCP (free, no card, no always-on computer needed)
 
-This gives Claude (mobile, desktop, web) read access to your Obsidian vault
-through a small server hosted for free on Render, reading straight from a
-GitHub repo. Your vault syncs to GitHub from your phone and desktop via the
-Obsidian Git plugin — nothing needs to stay powered on.
+Gives Claude (mobile, desktop, web) read and write access to an Obsidian vault
+stored in a GitHub repo, through a small server hosted free on Render. Your
+devices sync the vault to GitHub with the Obsidian Git plugin, so nothing has
+to stay powered on.
 
 ## Pieces
-- **GitHub repo** — the vault's source of truth (free, private).
-- **Obsidian Git plugin** — auto-commits/pushes/pulls from desktop + phone.
-- **This MCP server** — reads the repo via GitHub's API, exposes `list_notes`,
-  `read_note`, `search_notes` over MCP. Deployed free on Render.
-- **Graphify** — optional, run locally, commit its output into the repo like
-  any other notes.
+- **Vault repo** (GitHub, private): the source of truth for your notes.
+- **Obsidian Git plugin**: commits, pushes and pulls from phone and desktop.
+- **This server**: talks to the vault repo through GitHub's Contents API (no
+  local clone) and exposes 15 MCP tools. Deployed free on Render.
+- **Graphify** (optional): a GitHub Actions workflow in the vault repo that
+  builds a knowledge graph the server's graph tools read.
 
-## 1. Create the GitHub repo
-1. github.com → New repository → name it e.g. `obsidian-vault` → **Private** → Create.
-2. Settings → Developer settings → Personal access tokens → **Fine-grained token**:
-   - Repository access: only this repo.
-   - Permissions: **Contents → Read and write** (needed so Claude can create
-     and edit notes, not just read them).
-   - Copy the token — you'll paste it into Render as `GITHUB_TOKEN`.
+## Tools (15)
+`list_notes`, `read_note`, `write_note`, `append_note`, `delete_note`,
+`rename_note`, `search_notes`, `search_by_tag`, `get_backlinks`,
+`get_frontmatter`, `list_folders`, `get_daily_note`, `graph_overview`,
+`graph_find_node`, `graph_neighbors`.
+
+`write_note` replaces the whole file: read first, then write back the full
+updated content. Use `append_note` for pure additions. `delete_note` is a real,
+permanent git commit, so confirm before deleting anything.
+
+## Using a different vault (or sharing this with someone)
+Nothing about a specific vault is in the code. Which vault it reads comes only
+from environment variables on Render. To point it at another vault, change
+those, redeploy, then disconnect and reconnect the connector in Claude so it
+refreshes its tool list.
+
+Anyone else who wants this should deploy **their own copy** with their own
+token and secret. Never share your `GITHUB_TOKEN` or `MCP_SHARED_SECRET`;
+either gives write access to your vault.
+
+| Variable | Required | What it does |
+|---|---|---|
+| `GITHUB_TOKEN` | yes | Fine-grained token, Contents: Read and write, on the vault repo only |
+| `GITHUB_OWNER` | yes | GitHub username (or org) that owns the vault repo |
+| `GITHUB_REPO` | yes | Vault repo name |
+| `GITHUB_BRANCH` | no | Branch to use (default `main`) |
+| `MCP_SHARED_SECRET` | no | If set, every request to `/mcp` must send `Authorization: Bearer <secret>` |
+
+## 1. Create the vault repo
+1. GitHub → New repository → name it (e.g. `my-vault`) → **Private**.
+2. Settings → Developer settings → Personal access tokens → **Fine-grained
+   token**. Repository access: only this repo. Permissions: **Contents →
+   Read and write**. Copy the token for Render.
 
 ## 2. Wire up Obsidian Git (desktop + phone)
-1. Obsidian → Settings → Community plugins → browse → install **Obsidian Git**.
-2. Point your vault folder at a local clone of the repo (or `git init` it in
-   place and add the GitHub repo as `origin`).
-3. In the plugin settings, turn on **auto backup on interval** (e.g. every
-   10 min) and **auto pull on load** — it'll commit + push + pull for you.
-4. On phone: install Obsidian mobile, add the same plugin (it works on
-   iOS/Android), sign in to GitHub in the plugin's auth screen.
+1. Install **Obsidian Git** (Settings → Community plugins).
+2. Clone the repo as your vault, or `git init` in place and add it as `origin`.
+3. Turn on auto commit-and-sync on an interval and auto pull on load.
+4. Set **Merge strategy on conflicts** to **Theirs** on every device. With
+   "None", a device's stale local commit can silently overwrite writes made
+   through this server.
+5. **Keep `.obsidian/` out of the repo.** Add `.obsidian/` to `.gitignore`
+   before the first push. If it's already tracked, run
+   `git rm -r --cached .obsidian` and commit. Tracked plugin and workspace
+   files cause "local changes would be overwritten by checkout" errors on
+   phones.
 
-Now every device pushes/pulls to the same repo — that repo is your sync layer.
-
-## 3. Deploy the MCP server to Render (free)
+## 3. Deploy the server to Render (free)
 1. Push this folder (`server.js`, `package.json`, `render.yaml`) to its own
-   **public or private GitHub repo** (separate from the vault repo).
-2. render.com → New → Web Service → connect that repo.
-3. It should auto-detect `render.yaml`. If not: Build command `npm install`,
-   Start command `npm start`, plan **Free**.
-4. Add environment variables:
-   - `GITHUB_TOKEN` — the fine-grained token from step 1
-   - `GITHUB_OWNER` — your GitHub username
-   - `GITHUB_REPO` — your vault repo name (e.g. `obsidian-vault`)
-   - `GITHUB_BRANCH` — `main` (or whatever your default branch is)
-   - `MCP_SHARED_SECRET` — make up a random string; this keeps randoms who
-     find your Render URL from reading your vault
-5. Deploy. You'll get a URL like `https://obsidian-vault-mcp.onrender.com`.
+   GitHub repo, separate from the vault repo.
+2. render.com → New → Web Service → connect that repo. It should pick up
+   `render.yaml`; otherwise use build `npm install`, start `npm start`, plan
+   **Free**.
+3. Add the environment variables from the table above.
+4. Deploy. You get a URL like `https://<name>.onrender.com`.
 
-Free tier note: it sleeps after ~15 min idle and takes a few seconds to wake
-on the next request — fine for occasional Claude queries.
+Free tier: the service sleeps after about 15 minutes idle and takes a few
+seconds to wake on the next request. Deploying is just pushing to this repo's
+`main` branch.
 
 ## 4. Connect it to Claude
-In Claude → Settings → Connectors → Add custom connector:
-- URL: `https://<your-app>.onrender.com/mcp`
-- Header: `Authorization: Bearer <your MCP_SHARED_SECRET>`
+Claude → Settings → Connectors → Add custom connector, URL:
+`https://<your-app>.onrender.com/mcp`
 
-Then just ask Claude to search, read, or edit your notes — it'll call
-`search_notes` / `read_note` / `list_notes` / `write_note` / `delete_note`
-automatically. Writes commit straight to the repo, so they'll show up on
-your phone/desktop next time Obsidian Git syncs (or immediately if you have
-auto-pull-on-interval turned on).
+About `MCP_SHARED_SECRET`: the server only checks an `Authorization: Bearer`
+header. The claude.ai custom connector form has not always offered a header
+field. If yours doesn't, **leave `MCP_SHARED_SECRET` unset** on Render, or the
+server will reject Claude with 401. In that case the URL is the only barrier,
+so keep it private. If your client does let you add the header, set the secret
+on both sides. After setting or changing it, test with a read (`list_notes`).
 
-**Heads up on writes:** `write_note` overwrites the whole file — for edits
-to an existing note, have Claude read it first, then write back the full
-updated content. `delete_note` is a real, permanent git commit; it's worth
-asking Claude to confirm with you before deleting anything.
+Claude caches the tool list per connection, so reconnect the connector after
+any deploy that adds or changes tools.
 
-## 5. Graphify — automatic, free, no hosting needed
-Graphify builds a knowledge graph from your notes. Semantic extraction needs
-an LLM, and the free option that doesn't need any hosting is Google's
-**Gemini API free tier** (no credit card, doesn't expire).
+## 5. Graphify (optional knowledge graph)
+Graphify builds a graph from your notes using an LLM. The setup that fits a
+no-card account under 18 is **OpenRouter's free tier** (Google's Gemini API
+requires being 18+).
 
-**Get a free Gemini key:**
-1. Go to aistudio.google.com, sign in with a Google account.
-2. Get API key → Create API key. Copy it.
+1. Get an OpenRouter API key and add it to the **vault repo** under Settings →
+   Secrets and variables → Actions as `OPENROUTER_API_KEY`.
+2. Vault repo → Settings → Actions → General → Workflow permissions → **Read
+   and write**.
+3. Add `.github/workflows/graphify.yml` to the vault repo (see
+   `vault-workflow/.github/workflows/graphify.yml`). It runs daily, on pushes
+   to `main`, and manually from the Actions tab.
 
-**Add the GitHub Actions workflow:**
-1. In your **vault repo**, create `.github/workflows/graphify.yml` with the
-   contents from this project's `vault-workflow/.github/workflows/graphify.yml`.
-2. Repo → Settings → Secrets and variables → Actions → New repository secret:
-   - Name: `GEMINI_API_KEY`
-   - Value: the key from AI Studio
-3. Repo → Settings → Actions → General → Workflow permissions → set to
-   **Read and write permissions** (so the workflow can commit the graph back).
-4. It runs automatically once a day, and also whenever you push a change to
-   the vault. You can also trigger it manually from the repo's **Actions** tab.
+The workflow must:
+- install `graphifyy[openai]` (the bare package lacks the `openai` dependency),
+- run `graphify . --backend openai --obsidian`, **then**
+  `graphify cluster-only .` (the second step builds `GRAPH_REPORT.md`; skipping
+  it gives a green run with no report),
+- commit `graphify-out/` back to the repo.
 
-This produces `graphify-out/graph.json` and `graphify-out/GRAPH_REPORT.md` in
-your vault repo — no server, no Space, nothing to keep running.
+Output lands in `graphify-out/` (`graph.json`, `GRAPH_REPORT.md`) and the
+server's three graph tools read it from GitHub. Free OpenRouter models are
+pulled and swapped often, so if a run fails with 402, 404 or an empty
+response, change the model in the workflow. Graphify is a nice-to-have, not
+something the rest of the vault depends on.
 
-**The MCP server already has tools for it** (`graph_overview`,
-`graph_find_node`, `graph_neighbors`) — they read the graph straight from
-GitHub the same way `read_note` does. Nothing extra to deploy; just redeploy
-the updated `server.js` to Render and they'll show up next time Claude
-connects.
+## Troubleshooting
+- **Some writes return 403 while reads work.** Seen on full-note rewrites and
+  on content containing code-formatted text or literal error messages. It
+  looks triggered by that content, not by size alone, and the GitHub token and
+  Render logs were ruled out. Workaround: write in smaller `append_note`
+  chunks and paraphrase error text or commands instead of quoting them.
+- **A note reverted to an older version.** A device's pending local commit
+  pushed over the new version after pulling it. Set merge strategy to
+  **Theirs** on every device and check the repo's commit history to see what
+  happened.
+- **401 from the server.** `MCP_SHARED_SECRET` is set on Render but the
+  connector isn't sending the header. Unset it or add the header.
+- **Tools missing after a deploy.** Disconnect and reconnect the connector.
 
-## Local test (optional, before deploying)
+## Local test (optional)
 ```
 npm install
-GITHUB_TOKEN=xxx GITHUB_OWNER=you GITHUB_REPO=obsidian-vault npm start
+GITHUB_TOKEN=xxx GITHUB_OWNER=you GITHUB_REPO=my-vault npm start
 ```
-Then POST to `http://localhost:3000/mcp` with an MCP client, or just deploy
-straight to Render and test through Claude.
+Then POST to `http://localhost:3000/mcp` with an MCP client, or deploy and test
+through Claude.
