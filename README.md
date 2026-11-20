@@ -88,30 +88,43 @@ Claude caches the tool list per connection, so reconnect the connector after
 any deploy that adds or changes tools.
 
 ## 5. Graphify (optional knowledge graph)
-Graphify builds a graph from your notes using an LLM. The setup that fits a
-no-card account under 18 is **OpenRouter's free tier** (Google's Gemini API
-requires being 18+).
+Graphify builds a graph from your notes using an LLM. You pick the backend with
+one repo variable, so the same workflow works for any age.
 
-1. Get an OpenRouter API key and add it to the **vault repo** under Settings →
-   Secrets and variables → Actions as `OPENROUTER_API_KEY`.
-2. Vault repo → Settings → Actions → General → Workflow permissions → **Read
+| Backend | Who it's for | Key (Actions secret) | Install extra |
+|---|---|---|---|
+| `openai` (OpenRouter, default) | Anyone, including 13+ with parent permission. Free, no card. | `OPENROUTER_API_KEY` | `graphifyy[openai]` |
+| `gemini` (Google) | **Only if the person who owns and uses the key is 18 or older.** | `GEMINI_API_KEY` | `graphifyy[gemini]` |
+
+Why the split: Google's Gemini API terms say you must be 18 or older to use
+it, and a parent creating the key for a minor doesn't change who is using it.
+Free-tier Gemini inputs can also be used by Google to improve its products, so
+your whole vault would be sent through that. Gemini is generally steadier and
+has a bigger context window than free OpenRouter models, so use it if you're
+18+ and fine with that.
+
+Setup:
+1. Add the secret for your backend in the **vault repo** (Settings → Secrets
+   and variables → Actions → Secrets).
+2. To use Gemini, add a repo **Variable** (same page, Variables tab) named
+   `GRAPHIFY_BACKEND` with value `gemini`. Leave it unset (or `openai`) for
+   OpenRouter.
+3. Vault repo → Settings → Actions → General → Workflow permissions → **Read
    and write**.
-3. Add `.github/workflows/graphify.yml` to the vault repo (see
+4. Add `.github/workflows/graphify.yml` to the vault repo (see
    `vault-workflow/.github/workflows/graphify.yml`). It runs daily, on pushes
    to `main`, and manually from the Actions tab.
 
-The workflow must:
-- install `graphifyy[openai]` (the bare package lacks the `openai` dependency),
-- run `graphify . --backend openai --obsidian`, **then**
-  `graphify cluster-only .` (the second step builds `GRAPH_REPORT.md`; skipping
-  it gives a green run with no report),
-- commit `graphify-out/` back to the repo.
+Every backend must run both steps: `graphify . --backend <name> --obsidian`,
+**then** `graphify cluster-only .` (the second builds `GRAPH_REPORT.md`;
+skipping it gives a green run with no report). The workflow then commits
+`graphify-out/` back to the repo.
 
 Output lands in `graphify-out/` (`graph.json`, `GRAPH_REPORT.md`) and the
 server's three graph tools read it from GitHub. Free OpenRouter models are
 pulled and swapped often, so if a run fails with 402, 404 or an empty
-response, change the model in the workflow. Graphify is a nice-to-have, not
-something the rest of the vault depends on.
+response, change `GRAPHIFY_MODEL` in the workflow. Graphify is a nice-to-have,
+not something the rest of the vault depends on.
 
 ## Troubleshooting
 - **Some writes return 403 while reads work.** Seen on full-note rewrites and
